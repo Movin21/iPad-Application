@@ -27,11 +27,6 @@
 			path = NurseryConnect;
 			sourceTree = "<group>";
 		};
-		AA0000022F76FAEF003C8EE6 /* NurseryConnectTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = NurseryConnectTests;
-			sourceTree = "<group>";
-		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -56,7 +51,6 @@
 			isa = PBXGroup;
 			children = (
 				4ECD7E342F76FAEF003C8EE6 /* NurseryConnect */,
-				AA0000022F76FAEF003C8EE6 /* NurseryConnectTests */,
 				4ECD7E332F76FAEF003C8EE6 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -106,9 +100,6 @@
 			);
 			dependencies = (
 				AA0000112F76FAEF003C8EE6 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				AA0000022F76FAEF003C8EE6 /* NurseryConnectTests */,
 			);
 			name = NurseryConnectTests;
 			packageProductDependencies = (
