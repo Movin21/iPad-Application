@@ -152,16 +152,16 @@ struct IncidentFormView: View {
                         .foregroundStyle(isValid ? Color.ncAlert : .secondary)
                 }
             }
-            // Body map sheet — full-screen PencilKit canvas
+            // Body map sheet — BodyMapView fills full sheet height; no outer ScrollView
+            // (the inner BodyScrollView handles pan/zoom; nesting inside ScrollView breaks it)
             .sheet(isPresented: $showBodyMap) {
                 NavigationStack {
-                    ScrollView {
-                        BodyMapView(
-                            frontDrawingData: $frontDrawingData,
-                            backDrawingData:  $backDrawingData
-                        )
-                        .padding()
-                    }
+                    BodyMapView(
+                        frontDrawingData: $frontDrawingData,
+                        backDrawingData:  $backDrawingData
+                    )
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 8)
                     .navigationTitle("Body Map — \(child.firstName)")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {

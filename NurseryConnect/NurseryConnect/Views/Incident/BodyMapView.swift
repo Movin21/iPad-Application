@@ -1,14 +1,36 @@
 // Views/Incident/BodyMapView.swift
 // NurseryConnect
-// PencilKit body map with an inline SwiftUI tool-bar.
+// PencilKit body map with pinch-to-zoom, +/- zoom buttons, Draw/Mark/Eraser tools.
 //
-// PKToolPicker is intentionally NOT used: it requires the canvas to already
-// be attached to a UIWindowScene, which is unreliable inside a modal sheet on
-// iPadOS. Instead we set canvas.tool directly from a SwiftUI control, which
-// is always reliable regardless of presentation context.
+// Architecture:
+//   BodyScrollView (UIScrollView subclass — fires onLayout in layoutSubviews)
+//     └── containerView (UIView — viewForZooming target)
+//           ├── UIImageView  (body silhouette)
+//           └── PKCanvasView (transparent drawing layer, own scroll disabled)
+//
+// PKToolPicker is NOT used — it requires a fully-attached UIWindowScene which is
+// unreliable inside a modal sheet. canvas.tool is set directly from SwiftUI state.
 
 import SwiftUI
 import PencilKit
+
+// MARK: - Zoom proxy  (connects SwiftUI buttons → UIScrollView methods)
+
+final class BodyMapZoomProxy {
+    var zoomIn:    (() -> Void)?
+    var zoomOut:   (() -> Void)?
+    var resetZoom: (() -> Void)?
+}
+
+// MARK: - UIScrollView subclass that fires a layout callback
+
+private final class BodyScrollView: UIScrollView {
+    var onLayout: ((CGSize) -> Void)?
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onLayout?(bounds.size)
+    }
+}
 
 // MARK: - BodyMapView
 
@@ -18,12 +40,17 @@ struct BodyMapView: View {
 
     @State private var showFront   = true
     @State private var activeTool: DrawTool = .pen
+    // Separate proxies so the correct scroll view is targeted after .id() recreation
+    @State private var frontProxy  = BodyMapZoomProxy()
+    @State private var backProxy   = BodyMapZoomProxy()
 
-    // MARK: - Tool enum
+    private var activeProxy: BodyMapZoomProxy { showFront ? frontProxy : backProxy }
+
+    // MARK: DrawTool
 
     enum DrawTool: String, CaseIterable, Equatable {
-        case pen    = "Pen"
-        case marker = "Marker"
+        case pen    = "Draw"
+        case marker = "Mark"
         case eraser = "Eraser"
 
         var symbol: String {
@@ -37,10 +64,8 @@ struct BodyMapView: View {
         var pkTool: PKTool {
             switch self {
             case .pen:
-                // Clinical red ink — injury marking convention
-                return PKInkingTool(.pen,    color: .systemRed,                       width: 3)
+                return PKInkingTool(.pen,    color: .systemRed, width: 3)
             case .marker:
-                // Semi-transparent highlight for broad areas
                 return PKInkingTool(.marker, color: UIColor.systemRed.withAlphaComponent(0.45), width: 18)
             case .eraser:
                 return PKEraserTool(.bitmap, width: 22)
@@ -48,10 +73,10 @@ struct BodyMapView: View {
         }
     }
 
-    // MARK: - Body
+    // MARK: Body
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
 
             // Front / Back toggle
             Picker("Body view", selection: $showFront.animation(.spring(response: 0.32))) {
@@ -61,45 +86,74 @@ struct BodyMapView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal, 8)
 
-            // Body outline + PencilKit canvas
-            // .id(showFront) forces makeUIView when the side changes so the
-            // canvas loads the correct drawing rather than reusing the old one.
-            ZStack {
-                RoundedRectangle(cornerRadius: 12).fill(Color.white)
-
-                Image(showFront ? "BodyMapFront" : "BodyMapBack")
-                    .resizable()
-                    .scaledToFit()
-                    .padding(20)
-
-                Group {
-                    if showFront {
-                        PKCanvasRepresentable(
-                            drawingData: $frontDrawingData,
-                            activeTool:  activeTool
-                        )
-                    } else {
-                        PKCanvasRepresentable(
-                            drawingData: $backDrawingData,
-                            activeTool:  activeTool
-                        )
-                    }
-                }
-                .id(showFront)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+            // Canvas — fills all remaining vertical space
+            ZStack(alignment: .topTrailing) {
+                canvasLayer
+                zoomControls.padding(10)
             }
-            .aspectRatio(0.42, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 12))
-            .ncCardShadow()
+            .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
             .padding(.horizontal, 8)
 
-            // Inline tool-bar: tool selector + clear button
+            // Bottom tool bar
             toolBar
                 .padding(.horizontal, 8)
+                .padding(.bottom, 4)
         }
     }
 
-    // MARK: - Tool bar
+    // MARK: Canvas layer
+
+    @ViewBuilder
+    private var canvasLayer: some View {
+        Group {
+            if showFront {
+                BodyCanvasRepresentable(
+                    drawingData: $frontDrawingData,
+                    imageName:   "BodyMapFront",
+                    activeTool:  activeTool,
+                    proxy:       frontProxy
+                )
+            } else {
+                BodyCanvasRepresentable(
+                    drawingData: $backDrawingData,
+                    imageName:   "BodyMapBack",
+                    activeTool:  activeTool,
+                    proxy:       backProxy
+                )
+            }
+        }
+        .id(showFront)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    // MARK: Zoom controls overlay
+
+    private var zoomControls: some View {
+        VStack(spacing: 6) {
+            zoomButton(symbol: "plus.magnifyingglass")                      { activeProxy.zoomIn?() }
+            zoomButton(symbol: "minus.magnifyingglass")                     { activeProxy.zoomOut?() }
+            zoomButton(symbol: "arrow.down.right.and.arrow.up.left")        { activeProxy.resetZoom?() }
+        }
+    }
+
+    private func zoomButton(symbol: String, action: @escaping () -> Void) -> some View {
+        Button {
+            action()
+            HapticFeedback.light()
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(Color.ncAccent)
+                .frame(width: 38, height: 38)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Tool bar
 
     private var toolBar: some View {
         HStack(spacing: 8) {
@@ -115,7 +169,7 @@ struct BodyMapView: View {
                             .font(.caption2.weight(.medium))
                     }
                     .foregroundStyle(activeTool == tool ? Color.ncAccent : Color.ncOnSurfaceVariant)
-                    .frame(minWidth: 52)
+                    .frame(minWidth: 56)
                     .padding(.vertical, 8)
                     .background(
                         activeTool == tool
@@ -140,10 +194,11 @@ struct BodyMapView: View {
             }
             .buttonStyle(.plain)
 
-            // Clear current view
+            // Clear current side
             Button(role: .destructive) {
                 if showFront { frontDrawingData = Data() }
                 else         { backDrawingData  = Data() }
+                activeProxy.resetZoom?()
                 HapticFeedback.medium()
             } label: {
                 Label("Clear", systemImage: "trash")
@@ -154,46 +209,103 @@ struct BodyMapView: View {
     }
 }
 
-// MARK: - PKCanvasView UIViewRepresentable
+// MARK: - BodyCanvasRepresentable
 
-private struct PKCanvasRepresentable: UIViewRepresentable {
+private struct BodyCanvasRepresentable: UIViewRepresentable {
     @Binding var drawingData: Data
+    let imageName:  String
     let activeTool: BodyMapView.DrawTool
+    let proxy:      BodyMapZoomProxy
 
-    func makeUIView(context: Context) -> PKCanvasView {
+    // MARK: makeUIView
+
+    func makeUIView(context: Context) -> BodyScrollView {
+        let coordinator = context.coordinator
+
+        let scrollView = BodyScrollView()
+        scrollView.backgroundColor                = .white
+        scrollView.delegate                       = coordinator
+        scrollView.minimumZoomScale               = 0.3
+        scrollView.maximumZoomScale               = 5.0
+        scrollView.bouncesZoom                    = true
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator   = false
+
+        // Container — the single view returned by viewForZooming
+        let container = UIView()
+        container.backgroundColor = .clear
+        scrollView.addSubview(container)
+
+        // Body silhouette image
+        let imageView = UIImageView(image: UIImage(named: imageName))
+        imageView.contentMode     = .scaleAspectFit
+        imageView.backgroundColor = .clear
+        container.addSubview(imageView)
+
+        // PencilKit canvas — its own UIScrollView scroll disabled; outer handles it
         let canvas = PKCanvasView()
-        canvas.drawingPolicy = .anyInput   // Apple Pencil and finger
+        canvas.drawingPolicy   = .anyInput
         canvas.backgroundColor = .clear
         canvas.isOpaque        = false
+        canvas.isScrollEnabled = false
         canvas.tool            = activeTool.pkTool
-        canvas.delegate        = context.coordinator
-        context.coordinator.currentTool = activeTool
+        canvas.delegate        = coordinator
+        container.addSubview(canvas)
 
-        // Restore existing drawing, if any
+        coordinator.scrollView  = scrollView
+        coordinator.container   = container
+        coordinator.canvas      = canvas
+        coordinator.imageView   = imageView
+        coordinator.currentTool = activeTool
+
+        // Restore saved drawing
         if !drawingData.isEmpty, let saved = try? PKDrawing(data: drawingData) {
             canvas.drawing = saved
         }
 
-        // Register for undo notifications (posted by the toolbar's undo button)
+        // Undo notifications
         NotificationCenter.default.addObserver(
-            context.coordinator,
+            coordinator,
             selector: #selector(Coordinator.handleUndo(_:)),
             name: .bodyMapUndo,
             object: nil
         )
 
-        return canvas
-    }
-
-    func updateUIView(_ canvas: PKCanvasView, context: Context) {
-        // Switch tool only when the selection changed, not on every redraw.
-        // This avoids interrupting an in-progress stroke.
-        if context.coordinator.currentTool != activeTool {
-            context.coordinator.currentTool = activeTool
-            canvas.tool = activeTool.pkTool
+        // Layout callback — fires every time bounds change (first appear, rotation, etc.)
+        scrollView.onLayout = { [weak coordinator] size in
+            coordinator?.updateLayout(boundsSize: size)
         }
 
-        // Sync drawing when the binding was reset externally (clear button).
+        // Proxy zoom callbacks
+        proxy.zoomIn = { [weak scrollView] in
+            guard let sv = scrollView else { return }
+            sv.setZoomScale(min(sv.zoomScale * 1.5, sv.maximumZoomScale), animated: true)
+        }
+        proxy.zoomOut = { [weak scrollView] in
+            guard let sv = scrollView else { return }
+            sv.setZoomScale(max(sv.zoomScale / 1.5, sv.minimumZoomScale), animated: true)
+        }
+        proxy.resetZoom = { [weak scrollView] in
+            guard let sv = scrollView else { return }
+            sv.setZoomScale(sv.minimumZoomScale, animated: true)
+        }
+
+        return scrollView
+    }
+
+    // MARK: updateUIView
+
+    func updateUIView(_ scrollView: BodyScrollView, context: Context) {
+        let coord = context.coordinator
+
+        // Tool switch guard — avoids interrupting an in-progress stroke
+        if coord.currentTool != activeTool {
+            coord.currentTool  = activeTool
+            coord.canvas?.tool = activeTool.pkTool
+        }
+
+        // Sync drawing when binding was reset externally (Clear button)
+        guard let canvas = coord.canvas else { return }
         let target: PKDrawing
         if drawingData.isEmpty {
             target = PKDrawing()
@@ -210,28 +322,75 @@ private struct PKCanvasRepresentable: UIViewRepresentable {
 
     // MARK: Coordinator
 
-    final class Coordinator: NSObject, PKCanvasViewDelegate {
+    final class Coordinator: NSObject, PKCanvasViewDelegate, UIScrollViewDelegate {
         @Binding var drawingData: Data
         var currentTool: BodyMapView.DrawTool = .pen
-        weak var canvas: PKCanvasView?
+        weak var scrollView: BodyScrollView?
+        weak var container:  UIView?
+        weak var canvas:     PKCanvasView?
+        weak var imageView:  UIImageView?
+        private var lastLayoutSize: CGSize = .zero
 
         init(drawingData: Binding<Data>) { _drawingData = drawingData }
 
+        // Called from BodyScrollView.onLayout — sets up content size and fit zoom.
+        func updateLayout(boundsSize size: CGSize) {
+            guard size.width > 0, size != lastLayoutSize,
+                  let scrollView = scrollView,
+                  let container  = container,
+                  let imageView  = imageView,
+                  let canvas     = canvas
+            else { return }
+            lastLayoutSize = size
+
+            // Canonical canvas size — full bounds width × image aspect ratio
+            let image    = imageView.image ?? UIImage()
+            let aspect   = image.size.width > 0
+                ? image.size.height / image.size.width
+                : 2.38
+            let content  = CGSize(width: size.width, height: size.width * aspect)
+
+            container.frame        = CGRect(origin: .zero, size: content)
+            imageView.frame        = container.bounds
+            canvas.frame           = container.bounds
+            scrollView.contentSize = content
+
+            // Fit scale: smallest scale that shows the complete body
+            let fitScale = min(size.width / content.width,
+                               size.height / content.height)
+            let minScale = max(fitScale, 0.3)
+            scrollView.minimumZoomScale = minScale
+            scrollView.maximumZoomScale = minScale * 5
+
+            // Apply fit zoom on first layout only
+            if scrollView.zoomScale >= 1.0 {
+                scrollView.setZoomScale(minScale, animated: false)
+            }
+        }
+
+        // UIScrollViewDelegate — which view to zoom
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? { container }
+
+        // Re-centre content when smaller than the scroll view (standard pattern)
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            guard let container = container else { return }
+            let offsetX = max((scrollView.bounds.width  - scrollView.contentSize.width)  / 2, 0)
+            let offsetY = max((scrollView.bounds.height - scrollView.contentSize.height) / 2, 0)
+            container.center = CGPoint(
+                x: scrollView.contentSize.width  / 2 + offsetX,
+                y: scrollView.contentSize.height / 2 + offsetY
+            )
+        }
+
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-            canvas = canvasView
             drawingData = canvasView.drawing.dataRepresentation()
         }
 
         @objc func handleUndo(_ note: Notification) {
-            // The notification's object encodes which side is active (Bool).
-            // We undo regardless of side to keep it simple — the canvas that
-            // is currently live will receive the undo.
             canvas?.undoManager?.undo()
         }
 
-        deinit {
-            NotificationCenter.default.removeObserver(self)
-        }
+        deinit { NotificationCenter.default.removeObserver(self) }
     }
 }
 
@@ -247,10 +406,7 @@ private extension Notification.Name {
     @Previewable @State var front = Data()
     @Previewable @State var back  = Data()
     return NavigationStack {
-        ScrollView {
-            BodyMapView(frontDrawingData: $front, backDrawingData: $back)
-                .padding()
-        }
-        .navigationTitle("Body Map Preview")
+        BodyMapView(frontDrawingData: $front, backDrawingData: $back)
+            .padding(.horizontal, 8)
     }
 }
