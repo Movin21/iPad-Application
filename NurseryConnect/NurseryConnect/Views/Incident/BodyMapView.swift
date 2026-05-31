@@ -1,144 +1,256 @@
 // Views/Incident/BodyMapView.swift
 // NurseryConnect
-// Interactive body map — uses BodyMapFront asset image with tap-to-mark injury locations.
+// PencilKit body map with an inline SwiftUI tool-bar.
+//
+// PKToolPicker is intentionally NOT used: it requires the canvas to already
+// be attached to a UIWindowScene, which is unreliable inside a modal sheet on
+// iPadOS. Instead we set canvas.tool directly from a SwiftUI control, which
+// is always reliable regardless of presentation context.
 
 import SwiftUI
+import PencilKit
+
+// MARK: - BodyMapView
 
 struct BodyMapView: View {
-    @Binding var markers: [BodyMapMarker]
-    @State private var showFront = true
-    @State private var pendingLabel = ""
-    @State private var showLabelEntry = false
-    @State private var pendingPosition: CGPoint = .zero
+    @Binding var frontDrawingData: Data
+    @Binding var backDrawingData:  Data
 
-    private var currentMarkers: [BodyMapMarker] {
-        markers.filter { $0.isFront == showFront }
+    @State private var showFront   = true
+    @State private var activeTool: DrawTool = .pen
+
+    // MARK: - Tool enum
+
+    enum DrawTool: String, CaseIterable, Equatable {
+        case pen    = "Pen"
+        case marker = "Marker"
+        case eraser = "Eraser"
+
+        var symbol: String {
+            switch self {
+            case .pen:    return "pencil"
+            case .marker: return "highlighter"
+            case .eraser: return "eraser.fill"
+            }
+        }
+
+        var pkTool: PKTool {
+            switch self {
+            case .pen:
+                // Clinical red ink — injury marking convention
+                return PKInkingTool(.pen,    color: .systemRed,                       width: 3)
+            case .marker:
+                // Semi-transparent highlight for broad areas
+                return PKInkingTool(.marker, color: UIColor.systemRed.withAlphaComponent(0.45), width: 18)
+            case .eraser:
+                return PKEraserTool(.bitmap, width: 22)
+            }
+        }
     }
 
+    // MARK: - Body
+
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 14) {
+
             // Front / Back toggle
-            Picker("View", selection: $showFront.animation(.spring(response: 0.3))) {
+            Picker("Body view", selection: $showFront.animation(.spring(response: 0.32))) {
                 Text("Front").tag(true)
                 Text("Back").tag(false)
             }
             .pickerStyle(.segmented)
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 8)
 
-            // Body image + tap-to-mark overlay
-            GeometryReader { geo in
-                let size = geo.size
-                ZStack(alignment: .topLeading) {
-                    // Real body images — front and back assets
-                    Image(showFront ? "BodyMapFront" : "BodyMapBack")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: size.width, height: size.height)
+            // Body outline + PencilKit canvas
+            // .id(showFront) forces makeUIView when the side changes so the
+            // canvas loads the correct drawing rather than reusing the old one.
+            ZStack {
+                RoundedRectangle(cornerRadius: 12).fill(Color.white)
 
-                    // Injury markers
-                    ForEach(currentMarkers) { marker in
-                        markerPin(marker: marker, size: size)
+                Image(showFront ? "BodyMapFront" : "BodyMapBack")
+                    .resizable()
+                    .scaledToFit()
+                    .padding(20)
+
+                Group {
+                    if showFront {
+                        PKCanvasRepresentable(
+                            drawingData: $frontDrawingData,
+                            activeTool:  activeTool
+                        )
+                    } else {
+                        PKCanvasRepresentable(
+                            drawingData: $backDrawingData,
+                            activeTool:  activeTool
+                        )
                     }
                 }
-                .contentShape(Rectangle())
-                .onTapGesture { location in
-                    HapticFeedback.medium()
-                    pendingPosition = CGPoint(
-                        x: location.x / size.width,
-                        y: location.y / size.height
-                    )
-                    showLabelEntry = true
-                }
+                .id(showFront)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             .aspectRatio(0.42, contentMode: .fit)
-            .padding(.horizontal, 24)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .ncCardShadow()
+            .padding(.horizontal, 8)
 
-            // Marker legend
-            if !currentMarkers.isEmpty {
-                markerLegend
-            }
-
-            // Help text
-            Text("Tap on the body diagram to mark an injury location")
-                .font(.caption)
-                .foregroundStyle(Color.ncOnSurfaceVariant)
-                .multilineTextAlignment(.center)
-        }
-        .alert("Describe the injury", isPresented: $showLabelEntry) {
-            TextField("e.g. bruise, graze, redness", text: $pendingLabel)
-            Button("Add Marker") {
-                let marker = BodyMapMarker(
-                    x: pendingPosition.x,
-                    y: pendingPosition.y,
-                    isFront: showFront,
-                    label: pendingLabel.trimmingCharacters(in: .whitespaces)
-                )
-                markers.append(marker)
-                pendingLabel = ""
-                HapticFeedback.success()
-            }
-            Button("Cancel", role: .cancel) { pendingLabel = "" }
+            // Inline tool-bar: tool selector + clear button
+            toolBar
+                .padding(.horizontal, 8)
         }
     }
 
-    // MARK: - Marker Pin
+    // MARK: - Tool bar
 
-    private func markerPin(marker: BodyMapMarker, size: CGSize) -> some View {
-        let displayX = marker.x * size.width
-        let y = marker.y * size.height
-
-        return ZStack {
-            Circle()
-                .fill(Color.ncAlert.opacity(0.9))
-                .frame(width: 22, height: 22)
-                .shadow(color: Color.ncAlert.opacity(0.5), radius: 5)
-            Circle()
-                .fill(.white)
-                .frame(width: 9, height: 9)
-        }
-        .position(x: displayX, y: y)
-        .onTapGesture {
-            withAnimation(.spring(response: 0.3)) {
-                markers.removeAll { $0.id == marker.id }
-            }
-            HapticFeedback.medium()
-        }
-    }
-
-    // MARK: - Marker Legend
-
-    private var markerLegend: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("\(showFront ? "Front" : "Back") — \(currentMarkers.count) marker\(currentMarkers.count == 1 ? "" : "s")")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Color.ncOnSurfaceVariant)
-            ForEach(Array(currentMarkers.enumerated()), id: \.offset) { i, marker in
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(Color.ncAlert)
-                        .frame(width: 8, height: 8)
-                    Text("\(i + 1). \(marker.label.isEmpty ? "Unlabelled area" : marker.label)")
-                        .font(.caption)
-                        .foregroundStyle(Color.ncOnSurface)
-                    Spacer()
-                    Button {
-                        withAnimation { markers.removeAll { $0.id == marker.id } }
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(Color.ncOnSurfaceVariant)
-                            .font(.caption)
+    private var toolBar: some View {
+        HStack(spacing: 8) {
+            ForEach(DrawTool.allCases, id: \.self) { tool in
+                Button {
+                    activeTool = tool
+                    HapticFeedback.light()
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: tool.symbol)
+                            .font(.subheadline.weight(.semibold))
+                        Text(tool.rawValue)
+                            .font(.caption2.weight(.medium))
                     }
+                    .foregroundStyle(activeTool == tool ? Color.ncAccent : Color.ncOnSurfaceVariant)
+                    .frame(minWidth: 52)
+                    .padding(.vertical, 8)
+                    .background(
+                        activeTool == tool
+                            ? Color.ncAccent.opacity(0.12)
+                            : Color.clear,
+                        in: RoundedRectangle(cornerRadius: NCRadius.badge)
+                    )
                 }
+                .buttonStyle(.plain)
             }
+
+            Spacer()
+
+            // Undo
+            Button {
+                NotificationCenter.default.post(name: .bodyMapUndo, object: showFront)
+                HapticFeedback.light()
+            } label: {
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Color.ncOnSurfaceVariant)
+            }
+            .buttonStyle(.plain)
+
+            // Clear current view
+            Button(role: .destructive) {
+                if showFront { frontDrawingData = Data() }
+                else         { backDrawingData  = Data() }
+                HapticFeedback.medium()
+            } label: {
+                Label("Clear", systemImage: "trash")
+                    .font(.caption.weight(.medium))
+            }
+            .disabled(showFront ? frontDrawingData.isEmpty : backDrawingData.isEmpty)
         }
-        .padding(12)
-        .background(Color.ncCardBg, in: RoundedRectangle(cornerRadius: NCRadius.badge))
-        .padding(.horizontal, 4)
     }
 }
 
+// MARK: - PKCanvasView UIViewRepresentable
+
+private struct PKCanvasRepresentable: UIViewRepresentable {
+    @Binding var drawingData: Data
+    let activeTool: BodyMapView.DrawTool
+
+    func makeUIView(context: Context) -> PKCanvasView {
+        let canvas = PKCanvasView()
+        canvas.drawingPolicy = .anyInput   // Apple Pencil and finger
+        canvas.backgroundColor = .clear
+        canvas.isOpaque        = false
+        canvas.tool            = activeTool.pkTool
+        canvas.delegate        = context.coordinator
+        context.coordinator.currentTool = activeTool
+
+        // Restore existing drawing, if any
+        if !drawingData.isEmpty, let saved = try? PKDrawing(data: drawingData) {
+            canvas.drawing = saved
+        }
+
+        // Register for undo notifications (posted by the toolbar's undo button)
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.handleUndo(_:)),
+            name: .bodyMapUndo,
+            object: nil
+        )
+
+        return canvas
+    }
+
+    func updateUIView(_ canvas: PKCanvasView, context: Context) {
+        // Switch tool only when the selection changed, not on every redraw.
+        // This avoids interrupting an in-progress stroke.
+        if context.coordinator.currentTool != activeTool {
+            context.coordinator.currentTool = activeTool
+            canvas.tool = activeTool.pkTool
+        }
+
+        // Sync drawing when the binding was reset externally (clear button).
+        let target: PKDrawing
+        if drawingData.isEmpty {
+            target = PKDrawing()
+        } else if let d = try? PKDrawing(data: drawingData) {
+            target = d
+        } else { return }
+
+        if canvas.drawing.dataRepresentation() != target.dataRepresentation() {
+            canvas.drawing = target
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(drawingData: $drawingData) }
+
+    // MARK: Coordinator
+
+    final class Coordinator: NSObject, PKCanvasViewDelegate {
+        @Binding var drawingData: Data
+        var currentTool: BodyMapView.DrawTool = .pen
+        weak var canvas: PKCanvasView?
+
+        init(drawingData: Binding<Data>) { _drawingData = drawingData }
+
+        func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+            canvas = canvasView
+            drawingData = canvasView.drawing.dataRepresentation()
+        }
+
+        @objc func handleUndo(_ note: Notification) {
+            // The notification's object encodes which side is active (Bool).
+            // We undo regardless of side to keep it simple — the canvas that
+            // is currently live will receive the undo.
+            canvas?.undoManager?.undo()
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
+    }
+}
+
+// MARK: - Notification name
+
+private extension Notification.Name {
+    static let bodyMapUndo = Notification.Name("NurseryConnect.BodyMapUndo")
+}
+
+// MARK: - Preview
+
 #Preview {
-    @Previewable @State var markers: [BodyMapMarker] = []
-    return BodyMapView(markers: $markers)
-        .padding()
+    @Previewable @State var front = Data()
+    @Previewable @State var back  = Data()
+    return NavigationStack {
+        ScrollView {
+            BodyMapView(frontDrawingData: $front, backDrawingData: $back)
+                .padding()
+        }
+        .navigationTitle("Body Map Preview")
+    }
 }

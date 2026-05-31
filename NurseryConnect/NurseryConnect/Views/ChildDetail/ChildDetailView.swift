@@ -65,6 +65,10 @@ struct ChildDetailView: View {
                     eyfsProgressCard
                         .padding(.horizontal, 16)
 
+                    // Analytics — weekly trends via Charts framework
+                    weeklyTrendsSection
+                        .padding(.horizontal, 16)
+
                     // Open incidents
                     if !vm.openIncidents(for: child).isEmpty {
                         incidentsSection
@@ -161,24 +165,30 @@ struct ChildDetailView: View {
     }
 
     // MARK: - Quick Actions
+    // Uses eager Grid (not LazyVGrid) so cells are never deallocated during
+    // scroll — LazyVGrid can restore recycled views at zero opacity.
 
     private var quickActionsGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-            ActionButtonView(title: "Log Observation", symbol: "pencil.and.list.clipboard", color: Color.ncAccent) {
-                HapticFeedback.medium()
-                vm.showingLogForm = true
+        Grid(horizontalSpacing: 10, verticalSpacing: 10) {
+            GridRow {
+                ActionButtonView(title: "Log Observation", symbol: "pencil.and.list.clipboard", color: Color.ncAccent) {
+                    HapticFeedback.medium()
+                    vm.showingLogForm = true
+                }
+                ActionButtonView(title: "Record Meal", symbol: "fork.knife", color: Color.ncSuccess) {
+                    HapticFeedback.medium()
+                    vm.showingMealLog = true
+                }
             }
-            ActionButtonView(title: "Record Meal", symbol: "fork.knife", color: Color.ncSuccess) {
-                HapticFeedback.medium()
-                vm.showingMealLog = true
-            }
-            ActionButtonView(title: "Report Incident", symbol: "bandage.fill", color: Color.ncAlert) {
-                HapticFeedback.medium()
-                vm.showingIncidentForm = true
-            }
-            ActionButtonView(title: "EYFS Progress", symbol: "chart.bar.fill", color: Color(hex: "5c5c9a")) {
-                HapticFeedback.medium()
-                vm.showingEYFSTracker = true
+            GridRow {
+                ActionButtonView(title: "Report Incident", symbol: "bandage.fill", color: Color.ncAlert) {
+                    HapticFeedback.medium()
+                    vm.showingIncidentForm = true
+                }
+                ActionButtonView(title: "EYFS Progress", symbol: "chart.bar.fill", color: Color(hex: "5c5c9a")) {
+                    HapticFeedback.medium()
+                    vm.showingEYFSTracker = true
+                }
             }
         }
     }
@@ -310,6 +320,15 @@ struct ChildDetailView: View {
             .padding(14)
             .background(Color.ncCardBg, in: RoundedRectangle(cornerRadius: NCRadius.card))
             .ncCardShadow()
+        }
+    }
+
+    // MARK: - Weekly Trends (Charts)
+
+    private var weeklyTrendsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Weekly Trends")
+            ChildAnalyticsDashboardView(child: child)
         }
     }
 

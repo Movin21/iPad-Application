@@ -46,8 +46,12 @@ final class Incident {
     // Location within the nursery setting
     var location: String
 
-    // Body map — stored as JSON-encoded [BodyMapMarker]
+    // Body map — stored as JSON-encoded [BodyMapMarker] (legacy tap-based)
     var bodyMapMarkersData: Data?
+
+    // PencilKit freehand annotations — stored as PKDrawing.dataRepresentation()
+    var pencilDrawingFrontData: Data?
+    var pencilDrawingBackData: Data?
 
     // RIDDOR-specific flags
     var riddorRequired: Bool

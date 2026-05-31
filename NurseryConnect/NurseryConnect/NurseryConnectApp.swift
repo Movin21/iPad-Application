@@ -27,7 +27,7 @@ struct NurseryConnectApp: App {
 
     var body: some Scene {
         WindowGroup {
-            DashboardView()
+            RootSplitView()
                 .modelContainer(container)
         }
     }

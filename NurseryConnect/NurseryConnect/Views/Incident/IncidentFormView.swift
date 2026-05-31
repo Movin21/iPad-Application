@@ -1,6 +1,6 @@
 // Views/Incident/IncidentFormView.swift
 // NurseryConnect
-// RIDDOR-aligned incident report form with interactive body map.
+// RIDDOR-aligned incident report form with PencilKit body map annotation.
 // Implements Manager countersignature workflow state.
 
 import SwiftUI
@@ -9,29 +9,38 @@ import SwiftData
 struct IncidentFormView: View {
     let child: Child
     @Environment(\.modelContext) private var context
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismiss)      private var dismiss
 
     @State private var incidentType: IncidentType = .accident
     @State private var title          = ""
     @State private var description    = ""
     @State private var location       = ""
     @State private var witnesses      = ""
-    @State private var bodyMapMarkers: [BodyMapMarker] = []
-    @State private var riddorRequired = false
-    @State private var parentNotified = false
-    @State private var parentSig      = ""
 
-    @State private var showBodyMap    = false
-    @State private var showSuccess    = false
+    // PencilKit body map — separate Data payloads for front and back views
+    @State private var frontDrawingData = Data()
+    @State private var backDrawingData  = Data()
+
+    @State private var riddorRequired  = false
+    @State private var parentNotified  = false
+    @State private var parentSig       = ""
+
+    @State private var showBodyMap     = false
+    @State private var showSuccess     = false
 
     private var isValid: Bool {
         !title.trimmingCharacters(in: .whitespaces).isEmpty &&
         !description.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    private var hasBodyMapAnnotation: Bool {
+        !frontDrawingData.isEmpty || !backDrawingData.isEmpty
+    }
+
     var body: some View {
         NavigationStack {
             Form {
+
                 // MARK: Incident Details
                 Section("Incident Details") {
                     Picker("Type", selection: $incidentType) {
@@ -41,11 +50,13 @@ struct IncidentFormView: View {
                     }
 
                     if incidentType.isRiddorRelevant {
-                        Label("This incident type may require RIDDOR reporting to the HSE.",
-                              systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(Color.ncWarning)
-                            .listRowBackground(Color.ncWarning.opacity(0.08))
+                        Label(
+                            "This incident type may require RIDDOR reporting to the HSE.",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(Color.ncWarning)
+                        .listRowBackground(Color.ncWarning.opacity(0.08))
                     }
 
                     TextField("Incident Title (required)", text: $title)
@@ -62,33 +73,34 @@ struct IncidentFormView: View {
                     .lineLimit(5...12)
                 }
 
-                // MARK: Body Map
+                // MARK: Body Map (PencilKit)
                 Section {
-                    if bodyMapMarkers.isEmpty {
-                        Button {
-                            HapticFeedback.medium()
-                            showBodyMap = true
-                        } label: {
-                            Label("Open Body Map", systemImage: "figure.stand")
-                                .foregroundStyle(Color.ncAccent)
-                        }
-                    } else {
+                    if hasBodyMapAnnotation {
                         HStack {
-                            Label("\(bodyMapMarkers.count) marker\(bodyMapMarkers.count == 1 ? "" : "s") added",
-                                  systemImage: "mappin.circle.fill")
-                                .foregroundStyle(Color.ncAlert)
+                            Label("Body map annotated", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(Color.ncSuccess)
+                                .font(.subheadline.weight(.medium))
                             Spacer()
                             Button("Edit") {
                                 HapticFeedback.light()
                                 showBodyMap = true
                             }
                             .foregroundStyle(Color.ncAccent)
+                            .font(.subheadline.weight(.medium))
+                        }
+                    } else {
+                        Button {
+                            HapticFeedback.medium()
+                            showBodyMap = true
+                        } label: {
+                            Label("Annotate Body Map", systemImage: "pencil.and.outline")
+                                .foregroundStyle(Color.ncAccent)
                         }
                     }
                 } header: {
                     Text("Body Map")
                 } footer: {
-                    Text("Tap to mark injury locations on the front/back body outline.")
+                    Text("Draw directly with Apple Pencil or finger to mark injury locations on the body outline.")
                 }
 
                 // MARK: Witnesses
@@ -113,7 +125,7 @@ struct IncidentFormView: View {
                     }
                 }
 
-                // MARK: Review Status Info
+                // MARK: Compliance Note
                 Section {
                     HStack(spacing: 10) {
                         Image(systemName: "clock.badge.exclamationmark")
@@ -140,21 +152,27 @@ struct IncidentFormView: View {
                         .foregroundStyle(isValid ? Color.ncAlert : .secondary)
                 }
             }
+            // Body map sheet — full-screen PencilKit canvas
             .sheet(isPresented: $showBodyMap) {
                 NavigationStack {
-                    BodyMapView(markers: $bodyMapMarkers)
+                    ScrollView {
+                        BodyMapView(
+                            frontDrawingData: $frontDrawingData,
+                            backDrawingData:  $backDrawingData
+                        )
                         .padding()
-                        .navigationTitle("Body Map — \(child.firstName)")
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbar {
-                            ToolbarItem(placement: .confirmationAction) {
-                                Button("Done") {
-                                    HapticFeedback.success()
-                                    showBodyMap = false
-                                }
-                                .fontWeight(.semibold)
+                    }
+                    .navigationTitle("Body Map — \(child.firstName)")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") {
+                                HapticFeedback.success()
+                                showBodyMap = false
                             }
+                            .fontWeight(.semibold)
                         }
+                    }
                 }
             }
             .overlay(successOverlay)
@@ -185,20 +203,24 @@ struct IncidentFormView: View {
 
     private func save() {
         let incident = Incident(
-            keyworkerName: kKeyworkerName,
-            incidentType: incidentType,
-            title: title.trimmingCharacters(in: .whitespaces),
+            keyworkerName:  kKeyworkerName,
+            incidentType:   incidentType,
+            title:          title.trimmingCharacters(in: .whitespaces),
             descriptionText: description.trimmingCharacters(in: .whitespaces),
-            location: location,
+            location:       location,
             riddorRequired: riddorRequired && incidentType.isRiddorRelevant,
-            witnessNames: witnesses
+            witnessNames:   witnesses
         )
-        incident.bodyMapMarkers    = bodyMapMarkers
-        incident.parentNotified    = parentNotified
-        incident.parentNotifiedAt  = parentNotified ? Date() : nil
-        incident.parentSignature   = parentSig
-        incident.reviewStatus      = .pendingReview
-        incident.child             = child
+
+        // Store PencilKit drawing data (nil if no annotation made)
+        incident.pencilDrawingFrontData = frontDrawingData.isEmpty ? nil : frontDrawingData
+        incident.pencilDrawingBackData  = backDrawingData.isEmpty  ? nil : backDrawingData
+
+        incident.parentNotified   = parentNotified
+        incident.parentNotifiedAt = parentNotified ? Date() : nil
+        incident.parentSignature  = parentSig
+        incident.reviewStatus     = .pendingReview
+        incident.child            = child
         child.incidents.append(incident)
         context.insert(incident)
         try? context.save()
