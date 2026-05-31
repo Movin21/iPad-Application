@@ -32,22 +32,24 @@ private struct SleepEntry: Identifiable {
     let hours: Double
 }
 
-// Replaces the old stacked-bar model. One entry per EYFS domain,
-// showing overall % achieved — colour encodes achievement level.
+// One entry per EYFS domain.
+// levelLabel drives chartForegroundStyleScale — the correct Swift Charts API
+// for per-bar colour (direct `.foregroundStyle(color)` is overridden by the
+// chart's default palette; `foregroundStyle(by:)` + scale is not).
 private struct EYFSDomainProgress: Identifiable {
-    let id       = UUID()
-    let area:    String
+    let id        = UUID()
+    let area:     String
     let achieved: Int
-    let total:   Int
+    let total:    Int
 
     var percent: Double { total > 0 ? Double(achieved) / Double(total) * 100 : 0 }
 
-    var barColor: Color {
+    var levelLabel: String {
         switch percent {
-        case 75...:   return Color.ncSuccess
-        case 50..<75: return Color.ncAccent
-        case 1..<50:  return Color.ncWarning
-        default:      return Color.secondary.opacity(0.35)
+        case 75...:   return "Strong"
+        case 50..<75: return "Good"
+        case 1..<50:  return "Developing"
+        default:      return "Not Started"
         }
     }
 }
@@ -175,8 +177,9 @@ struct ChildAnalyticsDashboardView: View {
     }
 
     // MARK: - EYFS Progress Chart Card
-    // Horizontal progress bars (0–100 %) — one per domain.
-    // Colour encodes attainment level so the weakest areas are instantly visible.
+    // Vertical bar chart — domain on x-axis, % achieved on y-axis.
+    // Uses foregroundStyle(by:) + chartForegroundStyleScale, the only reliable
+    // way to apply per-bar colours in Swift Charts without them being overridden.
 
     private var eyfsChartCard: some View {
         AnalyticsChartCard(
@@ -185,44 +188,62 @@ struct ChildAnalyticsDashboardView: View {
             symbol:      "chart.bar.fill",
             accentColor: Color(hex: "5c5c9a")
         ) {
-            VStack(spacing: 8) {
+            VStack(spacing: 10) {
                 Chart(eyfsProgressData) { d in
+                    // Vertical bar: bar height = % achieved
                     BarMark(
-                        x: .value("Achieved %", d.percent),
-                        y: .value("Domain",     d.area)
+                        x: .value("Domain",     d.area),
+                        y: .value("Achieved %", d.percent)
                     )
-                    .foregroundStyle(d.barColor)
-                    .cornerRadius(5)
-                    .annotation(position: .trailing, alignment: .leading, spacing: 8) {
+                    .foregroundStyle(by: .value("Level", d.levelLabel))
+                    .cornerRadius(6)
+                    .annotation(position: .top, alignment: .center, spacing: 4) {
                         Text("\(d.achieved)/\(d.total)")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(Color.ncOnSurfaceVariant)
                             .monospacedDigit()
-                            .frame(minWidth: 30, alignment: .leading)
                     }
+
+                    // 75 % attainment target reference line
+                    RuleMark(y: .value("Target", 75.0))
+                        .foregroundStyle(Color.ncSuccess.opacity(0.55))
+                        .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+                        .annotation(position: .top, alignment: .trailing, spacing: 2) {
+                            Text("75% target")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(Color.ncSuccess.opacity(0.75))
+                        }
                 }
-                .chartXScale(domain: 0.0...100.0)
-                .chartXAxis {
+                // Map levelLabel strings to design-system colours
+                .chartForegroundStyleScale([
+                    "Strong":      Color.ncSuccess,
+                    "Good":        Color.ncAccent,
+                    "Developing":  Color.ncWarning,
+                    "Not Started": Color.secondary.opacity(0.28),
+                ])
+                .chartLegend(.hidden)
+                .chartYScale(domain: 0.0...100.0)
+                .chartYAxis {
                     AxisMarks(values: [0, 25, 50, 75, 100]) { v in
                         AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
                         AxisValueLabel {
-                            if let pct = v.as(Double.self) {
-                                Text("\(Int(pct))%").font(.caption2)
+                            if let p = v.as(Double.self) {
+                                Text("\(Int(p))%").font(.caption2)
                             }
                         }
                     }
                 }
-                .chartYAxis {
+                .chartXAxis {
                     AxisMarks { _ in AxisValueLabel().font(.caption2) }
                 }
-                .frame(height: 220)
+                .frame(height: 210)
 
-                // Colour legend
+                // Inline colour legend
                 HStack(spacing: 14) {
-                    eyfsLegendDot(color: .ncSuccess,              label: "≥75 % achieved")
-                    eyfsLegendDot(color: .ncAccent,               label: "50–75 %")
-                    eyfsLegendDot(color: .ncWarning,              label: "<50 %")
-                    eyfsLegendDot(color: .secondary.opacity(0.4), label: "No data")
+                    eyfsLegendDot(color: .ncSuccess,               label: "Strong ≥75%")
+                    eyfsLegendDot(color: .ncAccent,                label: "Good 50–75%")
+                    eyfsLegendDot(color: .ncWarning,               label: "Developing")
+                    eyfsLegendDot(color: .secondary.opacity(0.35), label: "Not started")
                 }
                 .padding(.top, 2)
             }
@@ -231,9 +252,9 @@ struct ChildAnalyticsDashboardView: View {
 
     private func eyfsLegendDot(color: Color, label: String) -> some View {
         HStack(spacing: 5) {
-            Circle()
+            RoundedRectangle(cornerRadius: 2)
                 .fill(color)
-                .frame(width: 8, height: 8)
+                .frame(width: 10, height: 10)
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(Color.ncOnSurfaceVariant)
