@@ -16,6 +16,7 @@ struct NurseryConnectApp: App {
             MealRecord.self,
             Incident.self,
             EYFSMilestone.self,
+            AttendanceRecord.self,
         ])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {

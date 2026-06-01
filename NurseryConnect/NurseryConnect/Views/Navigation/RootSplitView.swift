@@ -74,6 +74,15 @@ private struct SidebarPanelView: View {
         mine.filter(\.hasActiveAlerts).count
     }
 
+    private var presentTodayCount: Int {
+        let today = Calendar.current.startOfDay(for: Date())
+        return mine.filter { child in
+            child.attendanceRecords.contains {
+                Calendar.current.isDate($0.date, inSameDayAs: today) && $0.status == .present
+            }
+        }.count
+    }
+
     var body: some View {
         List {
             // ── Keyworker identity card ──────────────────────────────
@@ -148,6 +157,12 @@ private struct SidebarPanelView: View {
                     value: "\(pendingIncidents)",
                     symbol: "exclamationmark.triangle.fill",
                     color: pendingIncidents > 0 ? Color.ncWarning : Color.ncOnSurfaceVariant
+                )
+                SidebarStatRow(
+                    label: "Present Today",
+                    value: "\(presentTodayCount)/\(mine.count)",
+                    symbol: "person.fill.checkmark",
+                    color: presentTodayCount > 0 ? Color.ncSuccess : Color.ncOnSurfaceVariant
                 )
             }
 
@@ -227,6 +242,7 @@ private struct ChildSelectionListView: View {
                         .font(.title3)
                         .foregroundStyle(Color.ncAccent)
                 }
+                .keyboardShortcut("n", modifiers: .command)
             }
         }
         .sheet(isPresented: $showingAddChild) { AddChildView() }
@@ -268,6 +284,15 @@ private struct RoomOverviewDetailView: View {
 
     private var pendingIncidents: Int {
         mine.flatMap(\.incidents).filter { $0.reviewStatus == .pendingReview }.count
+    }
+
+    private var presentTodayCount: Int {
+        let today = Calendar.current.startOfDay(for: Date())
+        return mine.filter { child in
+            child.attendanceRecords.contains {
+                Calendar.current.isDate($0.date, inSameDayAs: today) && $0.status == .present
+            }
+        }.count
     }
 
     private var greeting: String {
@@ -321,6 +346,14 @@ private struct RoomOverviewDetailView: View {
                             symbol: "exclamationmark.triangle.fill",
                             color: pendingIncidents > 0
                                 ? Color.ncWarning
+                                : Color.ncOnSurfaceVariant
+                        )
+                        RoomStatCard(
+                            value: "\(presentTodayCount)/\(mine.count)",
+                            label: "Present Today",
+                            symbol: "person.fill.checkmark",
+                            color: presentTodayCount > 0
+                                ? Color.ncSuccess
                                 : Color.ncOnSurfaceVariant
                         )
                     }

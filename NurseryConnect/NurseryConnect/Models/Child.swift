@@ -183,6 +183,7 @@ final class Child {
     @Relationship(deleteRule: .cascade) var mealRecords: [MealRecord]
     @Relationship(deleteRule: .cascade) var incidents: [Incident]
     @Relationship(deleteRule: .cascade) var milestones: [EYFSMilestone]
+    @Relationship(deleteRule: .cascade) var attendanceRecords: [AttendanceRecord]
 
     // Computed helpers
     var fullName: String { "\(firstName) \(lastName)" }
@@ -239,9 +240,10 @@ final class Child {
         self.dietaryRequirements = dietaryRequirements
         self.emergencyContactName = emergencyContactName
         self.emergencyContactPhone = emergencyContactPhone
-        self.observations = []
-        self.mealRecords = []
-        self.incidents = []
-        self.milestones = []
+        self.observations       = []
+        self.mealRecords        = []
+        self.incidents          = []
+        self.milestones         = []
+        self.attendanceRecords  = []
     }
 }

@@ -65,6 +65,14 @@ private struct FluidEntry: Identifiable {
 struct ChildAnalyticsDashboardView: View {
     let child: Child
 
+    // Toggle between bar chart (by domain) and donut pie (by status)
+    @State private var eyfsViewMode: EYFSViewMode = .byDomain
+
+    private enum EYFSViewMode: String, CaseIterable {
+        case byDomain  = "By Domain"
+        case statusPie = "Status Pie"
+    }
+
     // MARK: Computed chart data
 
     private var sleepData: [SleepEntry] {
@@ -91,6 +99,20 @@ struct ChildAnalyticsDashboardView: View {
                 achieved: ms.filter { $0.status == .achieved }.count,
                 total:    ms.count
             )
+        }
+    }
+
+    // One entry per MilestoneStatus for the donut chart.
+    private struct MilestoneStatusEntry: Identifiable {
+        let id    = UUID()
+        let status: MilestoneStatus
+        let count:  Int
+    }
+
+    private var milestoneStatusData: [MilestoneStatusEntry] {
+        MilestoneStatus.allCases.compactMap { status in
+            let n = child.milestones.filter { $0.status == status }.count
+            return n > 0 ? MilestoneStatusEntry(status: status, count: n) : nil
         }
     }
 
@@ -177,76 +199,166 @@ struct ChildAnalyticsDashboardView: View {
     }
 
     // MARK: - EYFS Progress Chart Card
-    // Vertical bar chart — domain on x-axis, % achieved on y-axis.
-    // Uses foregroundStyle(by:) + chartForegroundStyleScale, the only reliable
-    // way to apply per-bar colours in Swift Charts without them being overridden.
+    // Segmented control lets the keyworker switch between:
+    //   • By Domain  — vertical BarMark, % achieved per EYFS area
+    //   • Status Pie — SectorMark donut, all milestones by status
 
     private var eyfsChartCard: some View {
         AnalyticsChartCard(
-            title:       "EYFS Progress by Domain",
-            subtitle:    "Milestones achieved per learning area",
+            title:       "EYFS Progress",
+            subtitle:    "Milestones · tap chart type to switch view",
             symbol:      "chart.bar.fill",
             accentColor: Color(hex: "5c5c9a")
         ) {
-            VStack(spacing: 10) {
-                Chart(eyfsProgressData) { d in
-                    // Vertical bar: bar height = % achieved
-                    BarMark(
-                        x: .value("Domain",     d.area),
-                        y: .value("Achieved %", d.percent)
-                    )
-                    .foregroundStyle(by: .value("Level", d.levelLabel))
-                    .cornerRadius(6)
-                    .annotation(position: .top, alignment: .center, spacing: 4) {
-                        Text("\(d.achieved)/\(d.total)")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(Color.ncOnSurfaceVariant)
-                            .monospacedDigit()
-                    }
-
-                    // 75 % attainment target reference line
-                    RuleMark(y: .value("Target", 75.0))
-                        .foregroundStyle(Color.ncSuccess.opacity(0.55))
-                        .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
-                        .annotation(position: .top, alignment: .trailing, spacing: 2) {
-                            Text("75% target")
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(Color.ncSuccess.opacity(0.75))
-                        }
-                }
-                // Map levelLabel strings to design-system colours
-                .chartForegroundStyleScale([
-                    "Strong":      Color.ncSuccess,
-                    "Good":        Color.ncAccent,
-                    "Developing":  Color.ncWarning,
-                    "Not Started": Color.secondary.opacity(0.28),
-                ])
-                .chartLegend(.hidden)
-                .chartYScale(domain: 0.0...100.0)
-                .chartYAxis {
-                    AxisMarks(values: [0, 25, 50, 75, 100]) { v in
-                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
-                        AxisValueLabel {
-                            if let p = v.as(Double.self) {
-                                Text("\(Int(p))%").font(.caption2)
-                            }
-                        }
+            VStack(spacing: 12) {
+                // Mode selector
+                Picker("Chart type", selection: $eyfsViewMode) {
+                    ForEach(EYFSViewMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
                     }
                 }
-                .chartXAxis {
-                    AxisMarks { _ in AxisValueLabel().font(.caption2) }
-                }
-                .frame(height: 210)
+                .pickerStyle(.segmented)
 
-                // Inline colour legend
-                HStack(spacing: 14) {
-                    eyfsLegendDot(color: .ncSuccess,               label: "Strong ≥75%")
-                    eyfsLegendDot(color: .ncAccent,                label: "Good 50–75%")
-                    eyfsLegendDot(color: .ncWarning,               label: "Developing")
-                    eyfsLegendDot(color: .secondary.opacity(0.35), label: "Not started")
+                if eyfsViewMode == .byDomain {
+                    eyfsDomainBarContent
+                } else {
+                    eyfsDonutContent
                 }
-                .padding(.top, 2)
             }
+        }
+    }
+
+    // MARK: Domain bar chart (existing)
+
+    private var eyfsDomainBarContent: some View {
+        VStack(spacing: 10) {
+            Chart(eyfsProgressData) { d in
+                BarMark(
+                    x: .value("Domain",     d.area),
+                    y: .value("Achieved %", d.percent)
+                )
+                .foregroundStyle(by: .value("Level", d.levelLabel))
+                .cornerRadius(6)
+                .annotation(position: .top, alignment: .center, spacing: 4) {
+                    Text("\(d.achieved)/\(d.total)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.ncOnSurfaceVariant)
+                        .monospacedDigit()
+                }
+
+                RuleMark(y: .value("Target", 75.0))
+                    .foregroundStyle(Color.ncSuccess.opacity(0.55))
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+                    .annotation(position: .top, alignment: .trailing, spacing: 2) {
+                        Text("75% target")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(Color.ncSuccess.opacity(0.75))
+                    }
+            }
+            .chartForegroundStyleScale([
+                "Strong":      Color.ncSuccess,
+                "Good":        Color.ncAccent,
+                "Developing":  Color.ncWarning,
+                "Not Started": Color.secondary.opacity(0.28),
+            ])
+            .chartLegend(.hidden)
+            .chartYScale(domain: 0.0...100.0)
+            .chartYAxis {
+                AxisMarks(values: [0, 25, 50, 75, 100]) { v in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                    AxisValueLabel {
+                        if let p = v.as(Double.self) {
+                            Text("\(Int(p))%").font(.caption2)
+                        }
+                    }
+                }
+            }
+            .chartXAxis {
+                AxisMarks { _ in AxisValueLabel().font(.caption2) }
+            }
+            .frame(height: 210)
+
+            HStack(spacing: 14) {
+                eyfsLegendDot(color: .ncSuccess,               label: "Strong ≥75%")
+                eyfsLegendDot(color: .ncAccent,                label: "Good 50–75%")
+                eyfsLegendDot(color: .ncWarning,               label: "Developing")
+                eyfsLegendDot(color: .secondary.opacity(0.35), label: "Not started")
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    // MARK: Status donut / pie chart (new)
+
+    private var eyfsDonutContent: some View {
+        let total    = child.milestones.count
+        let achieved = child.milestones.filter { $0.status == .achieved }.count
+
+        return VStack(spacing: 12) {
+            if milestoneStatusData.isEmpty {
+                ContentUnavailableView(
+                    "No Milestones",
+                    systemImage: "chart.pie",
+                    description: Text("Assign EYFS milestones to see the status breakdown.")
+                )
+                .frame(height: 200)
+            } else {
+                Chart(milestoneStatusData) { entry in
+                    SectorMark(
+                        angle:        .value("Milestones", entry.count),
+                        innerRadius:  .ratio(0.54),
+                        angularInset: 2.5
+                    )
+                    .foregroundStyle(by: .value("Status", entry.status.rawValue))
+                    .cornerRadius(5)
+                    .annotation(position: .overlay) {
+                        if entry.count > 0 {
+                            Text("\(entry.count)")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                }
+                .chartForegroundStyleScale([
+                    MilestoneStatus.notStarted.rawValue: Color.secondary.opacity(0.35),
+                    MilestoneStatus.emerging.rawValue:   Color.ncWarning,
+                    MilestoneStatus.developing.rawValue: Color.ncAccent,
+                    MilestoneStatus.achieved.rawValue:   Color.ncSuccess,
+                ])
+                .chartLegend(position: .trailing, alignment: .center, spacing: 16)
+                .frame(height: 220)
+                .overlay {
+                    // Centre label inside the donut hole
+                    VStack(spacing: 1) {
+                        Text("\(achieved)")
+                            .font(.title2.weight(.bold))
+                            .foregroundStyle(Color.ncSuccess)
+                        Text("of \(total)")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Color.ncOnSurfaceVariant)
+                        Text("achieved")
+                            .font(.caption2)
+                            .foregroundStyle(Color.ncOnSurfaceVariant)
+                    }
+                }
+            }
+
+            // Overall progress bar
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Overall Achievement")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.ncOnSurfaceVariant)
+                    Spacer()
+                    Text(total > 0 ? "\(Int(Double(achieved)/Double(total)*100))%" : "0%")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.ncSuccess)
+                        .monospacedDigit()
+                }
+                ProgressView(value: total > 0 ? Double(achieved)/Double(total) : 0)
+                    .tint(Color.ncSuccess)
+            }
+            .padding(.top, 2)
         }
     }
 

@@ -10,6 +10,19 @@ struct ChildDetailView: View {
     let child: Child
     @State private var vm = ChildDetailViewModel()
 
+    // MARK: - Attendance helpers
+
+    private var todayAttendance: AttendanceRecord? {
+        let today = Calendar.current.startOfDay(for: Date())
+        return child.attendanceRecords.first {
+            Calendar.current.isDate($0.date, inSameDayAs: today)
+        }
+    }
+
+    private var isChildPresentToday: Bool {
+        todayAttendance?.status == .present
+    }
+
     /// Deterministic avatar colour matching ChildCardView
     private var avatarColor: Color {
         let palette: [Color] = [
@@ -93,6 +106,21 @@ struct ChildDetailView: View {
         .sheet(isPresented: $vm.showingEYFSTracker) {
             EYFSTrackerView(child: child)
         }
+        .sheet(isPresented: $vm.showingAttendance) {
+            AttendanceView(child: child)
+        }
+        // iPadOS hardware-keyboard shortcuts (⌘ + key)
+        .background {
+            Group {
+                Button("") { vm.showingLogForm      = true }.keyboardShortcut("l", modifiers: .command)
+                Button("") { vm.showingMealLog       = true }.keyboardShortcut("m", modifiers: .command)
+                Button("") { vm.showingIncidentForm  = true }.keyboardShortcut("i", modifiers: .command)
+                Button("") { vm.showingEYFSTracker   = true }.keyboardShortcut("e", modifiers: .command)
+                Button("") { vm.showingAttendance    = true }.keyboardShortcut("k", modifiers: .command)
+            }
+            .opacity(0)
+            .allowsHitTesting(false)
+        }
     }
 
     // MARK: - Profile Header
@@ -140,6 +168,23 @@ struct ChildDetailView: View {
                     }
                 }
 
+                // Attendance status badge
+                HStack(spacing: 4) {
+                    Image(systemName: isChildPresentToday
+                          ? "person.fill.checkmark"
+                          : "person.slash")
+                        .font(.caption2.weight(.semibold))
+                    Text(isChildPresentToday ? "Present" : "Not signed in")
+                        .font(.caption2.weight(.medium))
+                }
+                .foregroundStyle(isChildPresentToday ? Color.ncSuccess : Color.ncOnSurfaceVariant)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(
+                    (isChildPresentToday ? Color.ncSuccess : Color.ncOnSurfaceVariant).opacity(0.10),
+                    in: Capsule()
+                )
+
                 if child.hasActiveAlerts {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -167,6 +212,7 @@ struct ChildDetailView: View {
     // MARK: - Quick Actions
     // Uses eager Grid (not LazyVGrid) so cells are never deallocated during
     // scroll — LazyVGrid can restore recycled views at zero opacity.
+    // Keyboard shortcuts (⌘L/M/I/E/K) are registered via invisible buttons in .background.
 
     private var quickActionsGrid: some View {
         Grid(horizontalSpacing: 10, verticalSpacing: 10) {
@@ -189,6 +235,18 @@ struct ChildDetailView: View {
                     HapticFeedback.medium()
                     vm.showingEYFSTracker = true
                 }
+            }
+            // Attendance — spans full row; shows live status colour
+            GridRow {
+                ActionButtonView(
+                    title: isChildPresentToday ? "Attendance · Present" : "Attendance · Sign In",
+                    symbol: isChildPresentToday ? "person.fill.checkmark" : "person.badge.clock",
+                    color: isChildPresentToday ? Color.ncSuccess : Color(hex: "5c7a9a")
+                ) {
+                    HapticFeedback.medium()
+                    vm.showingAttendance = true
+                }
+                .gridCellColumns(2)
             }
         }
     }
@@ -333,13 +391,34 @@ struct ChildDetailView: View {
     }
 
     // MARK: - Open Incidents
+    // Long-press any incident row → "Export PDF" to generate a PDFKit report
+    // via IncidentPDFExporter and share it via the system share sheet.
 
     private var incidentsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("Incidents Pending Review")
 
             ForEach(vm.openIncidents(for: child)) { incident in
-                IncidentRowView(incident: incident)
+                let report = IncidentPDFExporter.generate(incident: incident, child: child)
+                HStack(spacing: 8) {
+                    IncidentRowView(incident: incident)
+
+                    ShareLink(
+                        item: report,
+                        preview: SharePreview(
+                            incident.title.isEmpty ? "Incident Report" : incident.title,
+                            image: Image(systemName: "doc.text.fill")
+                        )
+                    ) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Color.ncAccent)
+                            .padding(8)
+                            .background(Color.ncAccent.opacity(0.10),
+                                        in: RoundedRectangle(cornerRadius: NCRadius.badge))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
     }

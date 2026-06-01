@@ -13,6 +13,7 @@ final class ChildDetailViewModel {
     var showingMealLog      = false
     var showingIncidentForm = false
     var showingEYFSTracker  = false
+    var showingAttendance   = false
 
     // MARK: - Today's summary
 
